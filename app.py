@@ -31,6 +31,7 @@ TEXTS = {
         "chart_dest_b": "Top 10 Destinations (Gate B)",
         "table_title": "Flight Records Database (Last 3 Months)",
         "upload_label": "Upload Real Flight Data (CSV/Excel)",
+        "refresh_status": "🔄 Data auto-refreshes 3 times daily (07:59, 15:59, 23:59 HKT)",
     },
     "Traditional Chinese": {
         "title": "✈️ 香港國際機場離港航班監控與數據分析",
@@ -50,6 +51,7 @@ TEXTS = {
         "chart_dest_b": "Gate B 前 10 大熱門航點 (其餘歸類為其他)",
         "table_title": "航班資料庫清單 (過去 3 個月)",
         "upload_label": "上傳真實航班資料 (CSV/Excel)",
+        "refresh_status": "🔄 數據每日定時 3 次自動更新 (香港時間 07:59, 15:59, 23:59)",
     },
 }
 
@@ -61,6 +63,7 @@ lang_choice = st.sidebar.selectbox(
 t = TEXTS[lang_choice]
 
 st.title(t["title"])
+st.sidebar.caption(t["refresh_status"])
 
 
 # 3. 閘口分類與更合理的真實分佈邏輯
@@ -88,9 +91,26 @@ def assign_gate_category():
   return gate_num, category
 
 
-# 4. 載入過去 3 個月資料 (自 2026年7月12日起) 並快取儲存
-@st.cache_data
-def load_mock_data():
+# 4. 搭配定時區段（對應每天 07:59, 15:59, 23:59）的快取失效機制
+def get_flight_refresh_key():
+  """根據目前香港時間，每到 08:00, 16:00, 00:00 就會改變快取 Key，
+
+  藉此強迫資料在 07:59, 15:59, 23:59 過後自動重新整理載入最新數據。
+  """
+  now_hkt = datetime.utcnow() + timedelta(hours=8)
+  h = now_hkt.hour
+  if h < 8:
+    period = "morning_0759"
+  elif h < 16:
+    period = "afternoon_1559"
+  else:
+    period = "night_2359"
+  return f"{now_hkt.strftime('%Y-%m-%d')}_{period}"
+
+
+# 載入過去 3 個月資料，並加入以定時時段為依據的 Cache TTL 與 Hash Key
+@st.cache_data(ttl=28800)  # 最多快取 8 小時，配合每日三次定時重新整理
+def load_mock_data(refresh_key):
   np.random.seed(42)
   start_date = datetime(2026, 7, 12)
   end_date = datetime.now()
@@ -179,7 +199,9 @@ def load_mock_data():
   return pd.DataFrame(data)
 
 
-df = load_mock_data()
+# 執行資料載入（傳入自動產生的刷新 Key）
+current_refresh_key = get_flight_refresh_key()
+df = load_mock_data(current_refresh_key)
 
 # 5. 側邊欄導航
 st.sidebar.markdown("---")
@@ -220,9 +242,8 @@ if app_mode == t["tab_dash"]:
   st.sidebar.markdown("---")
   st.sidebar.subheader("📅 日期範圍與對比設定")
 
-  # 1. 選擇分析日期或區間
-  default_start = datetime(2026, 9, 7).date()  # 週一
-  default_end = datetime(2026, 9, 13).date()  # 週日 (共 7 天)
+  default_start = datetime(2026, 9, 7).date()
+  default_end = datetime(2026, 9, 13).date()
 
   selected_date_input = st.sidebar.date_input(
       "選擇分析日期或區間 / Select Date or Range",
@@ -239,22 +260,17 @@ if app_mode == t["tab_dash"]:
 
   days_delta = (end_date - start_date).days + 1
 
-  # 2. 自動計算智慧預設基準期
   if days_delta == 1:
-    # 若選單日：預設基準為上週同一天 (例如週一比上週一)
     default_comp_start = start_date - timedelta(days=7)
     default_comp_end = end_date - timedelta(days=7)
   else:
-    # 若選多日區間：預設基準為往前平移相同天數
     default_comp_end = start_date - timedelta(days=1)
     default_comp_start = default_comp_end - timedelta(days=days_delta - 1)
 
-  # 3. 手動調整基準期設定區塊
   st.sidebar.markdown(f"### {t['comp_section']}")
   manual_comp_override = st.sidebar.checkbox(t["comp_toggle"], value=False)
 
   if manual_comp_override:
-    # 允許使用者手動自由調整基準起訖日期
     manual_comp_input = st.sidebar.date_input(
         t["comp_range_label"], value=(default_comp_start, default_comp_end)
     )
@@ -267,7 +283,6 @@ if app_mode == t["tab_dash"]:
           else manual_comp_input[0]
       )
   else:
-    # 使用智慧預設基準期
     comp_start_date = default_comp_start
     comp_end_date = default_comp_end
 
@@ -277,7 +292,6 @@ if app_mode == t["tab_dash"]:
       f" {comp_days_delta} 天)"
   )
 
-  # 資料篩選
   df["DateOnly"] = pd.to_datetime(df["ScheduledTime"]).dt.date
   current_day_df = df[
       (df["DateOnly"] >= start_date) & (df["DateOnly"] <= end_date)
@@ -468,6 +482,6 @@ elif app_mode == t["tab_forecast"]:
   st.plotly_chart(fig_trend, use_container_width=True)
 
   st.info(
-      "💡 Data Note: Loaded with complete 3-month historical records starting"
-      " from July 12, securely cached in session memory."
+      "💡 Data Note: Automatically synced and refreshed 3 times daily based on HKT"
+      " schedule blocks (07:59, 15:59, 23:59)."
   )
