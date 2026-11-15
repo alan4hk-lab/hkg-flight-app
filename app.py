@@ -520,4 +520,53 @@ if app_mode == t["tab_dash"]:
   else:
     st.warning(
         "No flight records found for this selected date range. Try choosing"
-        " another range or upload your data in
+        " another range or upload your data in the records tab."
+    )
+
+# ---------------------------------------------------------
+# TAB 2: 紀錄與上傳 (Records & Import)
+# ---------------------------------------------------------
+elif app_mode == t["tab_records"]:
+  st.subheader(t["table_title"])
+
+  uploaded_file = st.file_uploader(t["upload_label"], type=["csv", "xlsx"])
+  if uploaded_file is not None:
+    try:
+      if uploaded_file.name.endswith(".csv"):
+        user_df = pd.read_csv(uploaded_file)
+      else:
+        user_df = pd.read_excel(uploaded_file)
+      st.success("Successfully loaded your custom data file!")
+      df = user_df
+    except Exception as e:
+      st.error(f"Error loading file: {e}")
+
+  st.dataframe(df, use_container_width=True)
+
+# ---------------------------------------------------------
+# TAB 3: 預測分析 (Forecast)
+# ---------------------------------------------------------
+elif app_mode == t["tab_forecast"]:
+  st.subheader("📈 Flight Volume Time-Series & 3-Month Trend")
+  dep_only_df = df[df["FlightType"] == "DEP"] if "FlightType" in df.columns else df
+  daily_trend = (
+      dep_only_df.groupby(pd.to_datetime(dep_only_df["ScheduledTime"]).dt.date)
+      .size()
+      .reset_index(name="FlightCount")
+  )
+  daily_trend.columns = ["Date", "FlightCount"]
+
+  fig_trend = px.line(
+      daily_trend,
+      x="Date",
+      y="FlightCount",
+      markers=True,
+      title="Historical Daily Departure Volume (Past 3 Months)",
+      template="plotly_white",
+  )
+  st.plotly_chart(fig_trend, use_container_width=True)
+
+  st.info(
+      "💡 Data Note: Automatically synced and refreshed 3 times daily based on HKT"
+      " schedule blocks (07:59, 15:59, 23:59)."
+  )
